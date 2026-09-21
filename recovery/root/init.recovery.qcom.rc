@@ -27,6 +27,66 @@
 
 import /init.recovery.wifi.rc
 
+on early-init
+    # Qualcomm's Mapper5/SnapAlloc path produces native buffers that can be
+    # imported by both Adreno EGL and the KMS display backend.
+    setprop vendor.gralloc.enable_snapalloc true
+
+service aera-graphics-allocator /vendor/bin/hw/vendor.qti.hardware.display.allocator-service
+    class hal
+    seclabel u:r:recovery:s0
+    user root
+    group root graphics
+    capabilities SYS_NICE
+
+# The installed Xiaomi partitions supply ABI-matched Qualcomm audio libraries;
+# these renamed daemon copies provide stable init entry points in recovery.
+service aera-pd-mapper /vendor/bin/aera-pd-mapper
+    class core
+    disabled
+    seclabel u:r:recovery:s0
+    user system
+    group system
+    setenv LD_LIBRARY_PATH /vendor/aera-audio-abi:/vendor/aera-stock-lib64:/vendor/lib64:/system/lib64
+
+service aera-dspservice /vendor/bin/aera-dspservice
+    class hal
+    disabled
+    seclabel u:r:recovery:s0
+    user system
+    group system wakelock oem_2908
+    capabilities BLOCK_SUSPEND
+    setenv LD_LIBRARY_PATH /vendor/aera-audio-abi:/vendor/aera-stock-lib64:/vendor/lib64:/system/lib64
+    interface aidl vendor.qti.hardware.dsp.IDspService/default
+
+service aera-audioadsprpcd /vendor/bin/aera-audioadsprpcd audiopd adsp
+    class main
+    disabled
+    seclabel u:r:recovery:s0
+    user media
+    group media
+    setenv LD_LIBRARY_PATH /vendor/aera-audio-abi:/vendor/aera-stock-lib64:/vendor/lib64:/system/lib64
+
+service aera-agm-service /system/bin/aera-audio-service --thales-stock-agm
+    class main
+    disabled
+    seclabel u:r:recovery:s0
+    user root
+    group root system audio media wakelock
+    setenv LD_LIBRARY_PATH /vendor/aera-audio-abi:/vendor/aera-stock-lib64:/vendor/lib64:/system/lib64
+    setenv ANDROID_ROOT /system
+    setenv ANDROID_DATA /data
+    interface aidl vendor.qti.hardware.agm.IAGM/default
+    interface aidl vendor.qti.hardware.pal.IPAL/default
+
+service aera-audio-bootstrap /system/bin/aera-audio-bootstrap
+    class core
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
+    user root
+    group root system audio media wakelock
+
 on init
     start vendor.boot-qti
     setprop prepdecrypt.setpatch true
@@ -64,7 +124,7 @@ on property:vendor.sys.listeners.registered=true
     start vendor.secure_element
 
 # variant-script has copied this SKU's files into /odm.
-on property:twrp.variant.files_copied=1
+on property:aera.variant.files_copied=1
     start odm.vibratorfeature-service
     start odm.touch_report
     start odm.weaver-service
@@ -86,4 +146,9 @@ on property:twrp.modules.loaded=true
     write /sys/kernel/boot_adsp/ssr 1
     wait /sys/class/power_supply/battery
     start vendor.health-default
-    setprop twrp.firmware.mounted true
+    setprop aera.firmware.mounted true
+
+# Stock audio mounts and daemons are intentionally kept after the encryption
+# critical path so they cannot interfere with KeyMint, Weaver or decryption.
+on property:post.decrypt.modules=true
+    start aera-audio-bootstrap

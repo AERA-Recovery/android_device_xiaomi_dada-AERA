@@ -19,6 +19,9 @@ $(call inherit-product, $(SRC_TARGET_DIR)/product/emulated_storage.mk)
 # Configure twrp config common.mk
 $(call inherit-product, vendor/twrp/config/common.mk)
 
+# Configure AERA for the Xiaomi SM8750 family.
+$(call inherit-product, $(DEVICE_PATH)/aera_sm8750_thales.mk)
+
 # API
 BOARD_SHIPPING_API_LEVEL := 35
 PRODUCT_SHIPPING_API_LEVEL := 35
@@ -35,8 +38,21 @@ PRODUCT_EXTRA_RECOVERY_KEYS += \
     $(DEVICE_PATH)/security/releasekey
 
 # Required modules
-TWRP_REQUIRED_MODULES += \
+AERA_REQUIRED_MODULES += \
     prebuilt
+
+PRODUCT_PACKAGES += \
+    aera-thales-audio-bridge \
+    aera-thales-audio-service \
+    aera-browser-jail \
+    lpflash \
+    lpmake \
+    lpunpack
+
+# The EGL/GLES and allocator closure below comes from the Xiaomi 15 stock
+# dump, not from the OnePlus SM8750 stack.
+PRODUCT_VENDOR_PROPERTIES += \
+    ro.hardware.egl=adreno
 
 # Soong namespaces
 PRODUCT_SOONG_NAMESPACES += \
