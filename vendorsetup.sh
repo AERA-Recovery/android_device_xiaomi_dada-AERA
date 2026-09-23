@@ -15,6 +15,8 @@ if [ "$1" = "$FDEVICE" ] || [ "$AERA_BUILD_DEVICE" = "$FDEVICE" ]; then
     export AERA_REMOVE_AAPT=1
     export AERA_VANILLA_BUILD=1
     export AERA_PRODUCT_PREFIX=AERA
+    export AERA_BUILD_STATUS=Official
+    export AERA_BUILD_TYPE=Beta
     export AERA_USE_GREP_BINARY=1
     export AERA_USE_BUSYBOX_BINARY=1
     export AERA_USE_XZ_UTILS=1
