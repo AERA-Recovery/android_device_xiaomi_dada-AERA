@@ -4,7 +4,7 @@
 AERA_MAINTAINER := Jonas Salo & Daniel Springer
 
 # Logical UI metrics. Physical rendering remains native and is derived by the
-# adaptive UI2 path for the 1200x2670 and 1440x3200 family panels.
+# adaptive AERA UI path for the 1200x2670 and 1440x3200 family panels.
 AERA_SCREEN_H := 2400
 AERA_STATUS_H := 141
 AERA_HIDE_NOTCH := 1
