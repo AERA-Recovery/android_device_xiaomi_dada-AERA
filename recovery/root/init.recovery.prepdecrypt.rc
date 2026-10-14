@@ -1,0 +1,8 @@
+# Explicitly imported by the device init file. Neither the service definition
+# nor its script depends on the temporarily overlaid /odm partition.
+service odm.prepdecrypt /system/bin/sh /system/bin/aera-prepdecrypt.sh
+    user root
+    group root
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0

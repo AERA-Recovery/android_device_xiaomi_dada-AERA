@@ -54,6 +54,18 @@ PRODUCT_PACKAGES += \
 PRODUCT_VENDOR_PROPERTIES += \
     ro.hardware.egl=adreno
 
+# These recovery libraries must remain visible while Android's /vendor and
+# /odm are temporarily mounted for module loading and version inspection.
+PRODUCT_COPY_FILES += \
+    $(DEVICE_PATH)/recovery/root/vendor/lib64/libnativewindow.so:recovery/root/system/lib64/libnativewindow.so \
+    $(DEVICE_PATH)/recovery/root/vendor/lib64/libui.so:recovery/root/system/lib64/libui.so \
+    $(DEVICE_PATH)/recovery/root/vendor/lib64/libcxx.so:recovery/root/system/lib64/libcxx.so \
+    $(DEVICE_PATH)/recovery/root/vendor/lib64/libbinder_ndk-sdk35.so:recovery/root/system/lib64/libbinder_ndk-sdk35.so
+
+# GPU firmware must remain available while recovery inspects Android /vendor.
+PRODUCT_COPY_FILES += $(foreach fw,gen80000_zap.mbn gen80000_gmu.bin gen80000_aqe.fw gen80000_sqe.fw,\
+    $(DEVICE_PATH)/recovery/root/vendor/firmware/$(fw):recovery/root/system/etc/firmware/$(fw))
+
 # Soong namespaces
 PRODUCT_SOONG_NAMESPACES += \
     $(DEVICE_PATH)

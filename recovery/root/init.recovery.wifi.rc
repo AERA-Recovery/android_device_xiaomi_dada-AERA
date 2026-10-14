@@ -46,7 +46,10 @@ service wpa_supplicant /system/bin/wpa_supplicant -Dnl80211 -iwlan0 -dd -O/tmp/r
     disabled
     seclabel u:r:recovery:s0
 
-service aera-wlan-ready /system/bin/sh -c "until test -e /sys/class/net/wlan0; do sleep 1; done; setprop wifi.driver.ready true"
+# Keep readiness handling in init; retry after post-decrypt modules if the
+# early firmware trigger runs before the WLAN driver is available.
+# Escape shell dollars through init's property expansion.
+service aera-wlan-ready /system/bin/sh -c "echo 'AERA Wi-Fi: waiting for wlan0' > /dev/kmsg; n=0; until test -e /sys/class/net/wlan0; do if test $$n -ge 60; then echo 'AERA Wi-Fi: wlan0 missing after 60 seconds' > /dev/kmsg; exit 1; fi; sleep 1; n=$$((n + 1)); done; echo 'AERA Wi-Fi: wlan0 ready' > /dev/kmsg; setprop wifi.driver.ready true"
     disabled
     oneshot
     user root

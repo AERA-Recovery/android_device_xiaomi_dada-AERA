@@ -7,6 +7,7 @@
 
 PATH=/system/bin:/sbin
 export PATH
+echo "AERA audio: starting stock audio bootstrap" > /dev/kmsg
 stock_root=/mnt/aera-stock
 vendor_root=${stock_root}/vendor
 system_root=${stock_root}/system
@@ -16,6 +17,7 @@ lock=${stock_root}/.audio-lock
 slot_suffix="$(getprop ro.boot.slot_suffix)"
 
 fail() {
+    echo "AERA audio: FAILED: $*" > /dev/kmsg
     echo "AERA audio: $*" >&2
     exit 1
 }
@@ -35,7 +37,7 @@ mkdir -p "${stock_root}" "${vendor_root}" "${system_root}" "${odm_root}" \
     /vendor/firmware_mnt /vendor/dsp /vendor/lib/rfsa/adsp \
     /vendor/etc/acdbdata /vendor/etc/audio \
     /odm/etc/acdbdata /odm/etc/audio \
-    "${audio_abi}" /vendor/etc/seccomp_policy /data/vendor/battery
+    "${audio_abi}" /vendor/aera-stock-lib64 /vendor/aera-stock-odm-lib64 /vendor/etc/seccomp_policy /data/vendor/battery
 chmod 0755 "${stock_root}" /odm/firmware /vendor/lib /vendor/lib/rfsa
 chown 1000:1000 /data/vendor/battery
 lock_attempt=0
@@ -79,6 +81,23 @@ mount_read_only vendor "${vendor_root}" || fail "could not mount stock vendor"
 mount_read_only system "${system_root}" || fail "could not mount stock system"
 mount_read_only odm "${odm_root}" || fail "could not mount stock odm"
 
+# AGM selects a calibration subdirectory using the installed ODM algorithm.
+# Do not substitute reference-board calibration when the selector is missing.
+audio_algorithm="$(sed -n 's/^ro.vendor.audio.algorithm.support=//p' "${odm_root}/etc/build.prop" | head -n 1 | tr -d '\r')"
+case "${audio_algorithm}" in
+    ''|*[!a-zA-Z0-9_-]*) fail "missing or invalid stock audio algorithm selector" ;;
+esac
+[ -d "${odm_root}/etc/acdbdata/${audio_algorithm}" ] || \
+    fail "missing calibration directory for ${audio_algorithm}"
+calibration_found=0
+for calibration in "${odm_root}/etc/acdbdata/${audio_algorithm}"/*.acdb; do
+    [ -s "${calibration}" ] && calibration_found=1
+done
+[ "${calibration_found}" = 1 ] || fail "no stock calibration database for ${audio_algorithm}"
+resetprop ro.vendor.audio.algorithm.support "${audio_algorithm}" || \
+    fail "could not set the stock audio algorithm selector"
+echo "AERA audio: selected stock calibration ${audio_algorithm}" > /dev/kmsg
+
 # The dedicated slot-matched DSP partition carries AudioPD modules. Android
 # mounts it before audioadsprpcd starts and exposes the legacy /dsp alias.
 # Keep this after FBE/decryption, alongside the rest of the stock audio mounts.
@@ -115,9 +134,9 @@ bind_file_read_only "${system_lib64}/libbinder.so" \
     "${audio_abi}/libbinder.so"
 bind_file_read_only "${system_lib64}/libbinder_ndk.so" \
     "${audio_abi}/libbinder_ndk.so"
-bind_file_read_only \
-    "${vendor_root}/etc/seccomp_policy/vendor.qti.hardware.dsp.policy" \
-    "/vendor/etc/seccomp_policy/vendor.qti.hardware.dsp.policy"
+# Keep the policy alongside the packaged daemon and visible to init's namespace.
+[ -r /vendor/etc/seccomp_policy/vendor.qti.hardware.dsp.policy ] || \
+    fail "missing ramdisk DSP seccomp policy"
 
 # Keep AERA's vendor tree and GPU userspace visible. Qualcomm's matching
 # library directory is exposed under /vendor so the vendor linker namespace
@@ -126,6 +145,14 @@ if ! grep -q ' /vendor/aera-stock-lib64 ' /proc/mounts; then
     mount -o bind "${vendor_root}/lib64" /vendor/aera-stock-lib64 || \
         fail "could not expose the installed stock audio libraries"
     mount -o remount,bind,ro /vendor/aera-stock-lib64 2>/dev/null
+fi
+
+# PAL also depends on Xiaomi's ODM libraries (including libaudioroute_ext).
+if ! grep -q ' /vendor/aera-stock-odm-lib64 ' /proc/mounts; then
+    mount -o bind "${odm_root}/lib64" /vendor/aera-stock-odm-lib64 || \
+        fail "could not expose the installed ODM audio libraries"
+    mount -o remount,bind,ro /vendor/aera-stock-odm-lib64 || \
+        fail "could not make the ODM audio library view read-only"
 fi
 
 # The modem partition owns the ADSP images and service-locator JSON files.
@@ -138,10 +165,14 @@ if ! grep -q ' /firmware ' /proc/mounts; then
     mount -t vfat -o ro "${modem}" /firmware || \
         fail "could not mount the ADSP firmware partition"
 fi
-if ! grep -q ' /vendor/firmware_mnt ' /proc/mounts; then
-    mount -o bind /firmware /vendor/firmware_mnt || \
-        fail "could not expose ADSP firmware to stock vendor"
-fi
+# Do not mount over the packaged eSE trustlets when starting audio.
+mkdir -p /vendor/firmware_mnt/image || fail "could not create firmware view"
+for firmware in /firmware/image/*; do
+    [ -f "${firmware}" ] || continue
+    target="/vendor/firmware_mnt/image/${firmware##*/}"
+    [ -e "${target}" ] || ln -s "${firmware}" "${target}" || \
+        fail "could not expose modem firmware ${firmware}"
+done
 
 # AGM prefers the device-specific ODM calibration database. Recovery already
 # owns /odm as a rootfs directory, so expose only the required stock subtree.
@@ -176,6 +207,16 @@ if [ -d "${odm_root}/etc/audio" ] && \
     mount -o remount,bind,ro /odm/etc/audio 2>/dev/null
 fi
 
+# PAL falls back to /vendor/etc in recovery, rather than resolving Android's
+# SKU configuration directory. Expose only the installed sun routing files at
+# those paths; do not overlay /vendor/etc or use reference-board calibration.
+for config in mixer_paths_sun_mtp.xml mixer_paths_overlay_static.xml \
+              mixer_paths_overlay_dynamic.xml resourcemanager_sun_mtp.xml; do
+    bind_file_read_only "${odm_root}/etc/audio/sku_sun/${config}" \
+        "/vendor/etc/${config}"
+done
+echo "AERA audio: stock sun mixer and resource-manager configurations exposed" > /dev/kmsg
+
 # Device calibration is similarly isolated to the stock ODM subtree.
 if [ -d "${odm_root}/etc/acdbdata" ] && \
    ! grep -q ' /odm/etc/acdbdata ' /proc/mounts; then
@@ -190,12 +231,30 @@ if [ -d "${odm_root}/lib/rfsa/adsp" ] && \
    ! grep -q ' /vendor/lib/rfsa/adsp ' /proc/mounts; then
     mount -o bind "${odm_root}/lib/rfsa/adsp" /vendor/lib/rfsa/adsp || true
 fi
-for config in card-defs.xml mem_logger_config.xml; do
+for config in card-defs.xml mem_logger_config.xml usecaseKvManager.xml; do
     source_config="${vendor_root}/etc/${config}"
     target_config="/vendor/etc/${config}"
-    [ -f "${source_config}" ] && [ -f "${target_config}" ] && \
-        mount -o bind "${source_config}" "${target_config}" 2>/dev/null
+    bind_file_read_only "${source_config}" "${target_config}"
 done
+
+# PAL prefers Xiaomi's ODM use-case map over the generic vendor fallback.
+if [ -f "${odm_root}/etc/usecaseKvManager.xml" ]; then
+    bind_file_read_only "${odm_root}/etc/usecaseKvManager.xml" \
+        /odm/etc/usecaseKvManager.xml
+fi
+# Diagnostic key names are optional; their absence must not block playback.
+if [ -f "${vendor_root}/etc/kvh2xml.xml" ]; then
+    bind_file_read_only "${vendor_root}/etc/kvh2xml.xml" /vendor/etc/kvh2xml.xml
+fi
+echo "AERA audio: stock PAL use-case configurations exposed" > /dev/kmsg
+
+# PAL initializes audio haptics even for ordinary speaker playback. Keep its
+# configuration paired with the installed PAL libraries, not the ramdisk HAL.
+for config in Hapticsconfig.xml HapticsPolicy.xml; do
+    bind_file_read_only "${vendor_root}/etc/${config}" \
+        "/vendor/etc/${config}"
+done
+echo "AERA audio: stock PAL haptics configurations exposed" > /dev/kmsg
 
 mkdir -p /data/vendor/audio/acdbdata/delta /data/vendor/audio_dsp
 
@@ -251,6 +310,7 @@ start_init_service aera-pd-mapper required
 start_init_service aera-dspservice required
 start_init_service aera-audioadsprpcd required
 start_adsp
+echo "AERA audio: DSP daemons started; waiting for sound card" > /dev/kmsg
 
 attempt=0
 # card 100 is tinyalsa's virtual AGM plugin id; the kernel machine card itself
@@ -259,10 +319,29 @@ while [ ! -e /dev/snd/controlC0 ] && [ "${attempt}" -lt 200 ]; do
     attempt=$((attempt + 1))
     sleep 0.1
 done
-[ -e /dev/snd/controlC0 ] || fail "the Qualcomm machine sound card did not register"
+if [ ! -e /dev/snd/controlC0 ]; then
+    # A loaded module is not proof that its devices successfully probed.
+    # Preserve the actual supplier blockers in the tester's kernel log.
+    if [ -r /sys/kernel/debug/devices_deferred ]; then
+        while IFS= read -r pending; do
+            echo "AERA audio: deferred probe: ${pending}" > /dev/kmsg
+        done < /sys/kernel/debug/devices_deferred
+    fi
+    for node in /sys/bus/platform/devices/*; do
+        [ -r "${node}/of_node/compatible" ] || continue
+        compatible="$(tr '\000' ' ' < "${node}/of_node/compatible")"
+        case "${compatible}" in
+            *msm-cdc-pinctrl*|*lpi-pinctrl*)
+                driver="$(readlink "${node}/driver")"
+                echo "AERA audio: pinctrl ${node##*/}: ${compatible}; driver=${driver:-unbound}" > /dev/kmsg
+                ;;
+        esac
+    done
+    fail "the Qualcomm machine sound card did not register"
+fi
 
 # The init service owns the stock-library environment. Do not export it here:
 # recovery's toolbox/getprop/setprop require AERA's matching system libraries.
 start_init_service aera-agm-service required
 
-echo "AERA audio: Xiaomi SM8750 AGM backend is ready"
+echo "AERA audio: sound card registered; AGM/PAL service launched (initialization reported by AERAAudio)" > /dev/kmsg

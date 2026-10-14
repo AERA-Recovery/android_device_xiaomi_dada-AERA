@@ -66,6 +66,7 @@ log_print() {
 	esac
 	if [ $__VERBOSE -ge "$1" ]; then
 		echo "$LOG_LEVEL:$SCRIPTNAME::$2" >>"$LOGFILE"
+		echo "AERA prepdecrypt: $LOG_LEVEL: $2" > /dev/kmsg
 	fi
 }
 
@@ -103,6 +104,27 @@ wait_for_service() {
 # even when they could not be read: keystore2 blocks until KeyMint registers,
 # and nothing decrypts without it.
 start_crypto_services() {
+	# Module loading/version inspection can leave Android partitions over the
+	# recovery trees. Only detach block-backed overlays, never the ramdisk.
+	for target in /odm /vendor; do
+		attempt=0
+		while grep -q "^/dev/block/.* $target " /proc/mounts; do
+			attempt=$((attempt + 1))
+			if [ "$attempt" -gt 4 ] || ! umount -l "$target"; then
+				log_print 0 "Cannot restore recovery $target; crypto startup stopped."
+				return 1
+			fi
+		done
+	done
+	# Keep packaged trustlets; expose the remaining slot-matched modem files
+	# through links instead of hiding the directory with a mount.
+	mkdir -p /vendor/firmware_mnt/image || return 1
+	for firmware in /firmware/image/*; do
+		[ -f "$firmware" ] || continue
+		target="/vendor/firmware_mnt/image/${firmware##*/}"
+		[ -e "$target" ] || ln -s "$firmware" "$target" || return 1
+	done
+	log_print 1 "Recovery vendor/odm restored; packaged trustlets preserved."
 	log_print 1 "Starting KeyMint..."
 	setprop ctl.start vendor.keymint-qti
 	wait_for_service vendor.keymint-qti running
@@ -125,7 +147,7 @@ finish() {
 			fi
 		fi
 	fi
-	start_crypto_services
+	start_crypto_services || exit 2
 	setprop crypto.ready 1
 	log_print 1 "crypto.ready=$(getprop crypto.ready)"
 	log_print 1 "Script complete. Device ready for decryption."
@@ -149,7 +171,7 @@ finish_error() {
 			fi
 		fi
 	fi
-	start_crypto_services
+	start_crypto_services || exit 2
 	setprop crypto.ready 1
 	log_print 0 "Script run incomplete. Device may not be ready for decryption."
 	exit 2
@@ -211,8 +233,10 @@ check_encrypt() {
 	elif [ "$encrypt_type" = "block" ]; then
 		log_print 1 "Full Device Encryption (FDE) found."
 	else
-		log_print 0 "Unknown decryption type or type not set. Exiting script."
-		exit 1
+		# Module loading precedes userdata inspection. KeyMint is needed to
+		# unlock metadata, so waiting for a crypto type here creates a startup
+		# dependency cycle. Version preparation is safe without that property.
+		log_print 1 "Crypto type '$encrypt_type' not available yet; continuing version preparation for KeyMint."
 	fi
 }
 
@@ -278,7 +302,7 @@ sdkver=$(getprop ro.build.version.sdk)
 patchlevel=$(getprop ro.build.version.security_patch)
 patchlevel_orig=$(getprop ro.build.version.security_patch_orig)
 
-log_print 2 "Running $SCRIPTNAME script for TWRP..."
+log_print 1 "Starting version preparation for KeyMint..."
 check_encrypt
 
 log_print 2 "SDK version: $sdkver"

@@ -26,6 +26,7 @@
 #
 
 import /init.recovery.wifi.rc
+import /init.recovery.prepdecrypt.rc
 
 on early-init
     # Qualcomm's Mapper5/SnapAlloc path produces native buffers that can be
@@ -38,6 +39,8 @@ service aera-graphics-allocator /vendor/bin/hw/vendor.qti.hardware.display.alloc
     user root
     group root graphics
     capabilities SYS_NICE
+    # SnapAlloc must parse its tables using the matching vendor JsonCpp ABI.
+    setenv LD_LIBRARY_PATH /vendor/lib64:/system/lib64
 
 # The installed Xiaomi partitions supply ABI-matched Qualcomm audio libraries;
 # these renamed daemon copies provide stable init entry points in recovery.
@@ -47,7 +50,7 @@ service aera-pd-mapper /vendor/bin/aera-pd-mapper
     seclabel u:r:recovery:s0
     user system
     group system
-    setenv LD_LIBRARY_PATH /vendor/aera-audio-abi:/vendor/aera-stock-lib64:/vendor/lib64:/system/lib64
+    setenv LD_LIBRARY_PATH /vendor/aera-audio-abi:/vendor/aera-stock-odm-lib64:/vendor/aera-stock-lib64:/vendor/lib64:/system/lib64
 
 service aera-dspservice /vendor/bin/aera-dspservice
     class hal
@@ -56,7 +59,7 @@ service aera-dspservice /vendor/bin/aera-dspservice
     user system
     group system wakelock oem_2908
     capabilities BLOCK_SUSPEND
-    setenv LD_LIBRARY_PATH /vendor/aera-audio-abi:/vendor/aera-stock-lib64:/vendor/lib64:/system/lib64
+    setenv LD_LIBRARY_PATH /vendor/aera-audio-abi:/vendor/aera-stock-odm-lib64:/vendor/aera-stock-lib64:/vendor/lib64:/system/lib64
     interface aidl vendor.qti.hardware.dsp.IDspService/default
 
 service aera-audioadsprpcd /vendor/bin/aera-audioadsprpcd audiopd adsp
@@ -65,7 +68,7 @@ service aera-audioadsprpcd /vendor/bin/aera-audioadsprpcd audiopd adsp
     seclabel u:r:recovery:s0
     user media
     group media
-    setenv LD_LIBRARY_PATH /vendor/aera-audio-abi:/vendor/aera-stock-lib64:/vendor/lib64:/system/lib64
+    setenv LD_LIBRARY_PATH /vendor/aera-audio-abi:/vendor/aera-stock-odm-lib64:/vendor/aera-stock-lib64:/vendor/lib64:/system/lib64
 
 service aera-agm-service /system/bin/aera-audio-service --thales-stock-agm
     class main
@@ -73,7 +76,7 @@ service aera-agm-service /system/bin/aera-audio-service --thales-stock-agm
     seclabel u:r:recovery:s0
     user root
     group root system audio media wakelock
-    setenv LD_LIBRARY_PATH /vendor/aera-audio-abi:/vendor/aera-stock-lib64:/vendor/lib64:/system/lib64
+    setenv LD_LIBRARY_PATH /vendor/aera-audio-abi:/vendor/aera-stock-odm-lib64:/vendor/aera-stock-lib64:/vendor/lib64:/system/lib64
     setenv ANDROID_ROOT /system
     setenv ANDROID_DATA /data
     interface aidl vendor.qti.hardware.agm.IAGM/default
@@ -110,7 +113,6 @@ on fs
     mkdir /mnt/vendor/persist 0775 shell system
     mkdir /tmp/persist 0775 shell system
     mount none /tmp/persist /mnt/vendor/persist bind rec
-    install_keyring
 
 on post-fs
     start odm.variant-script
@@ -121,23 +123,26 @@ on boot
 # qseecomd is up, so the HALs that reach a trustlet through it can follow.
 on property:vendor.sys.listeners.registered=true
     start vendor.gatekeeper_default
-    start vendor.secure_element
 
 # variant-script has copied this SKU's files into /odm.
 on property:aera.variant.files_copied=1
     start odm.vibratorfeature-service
     start odm.touch_report
+
+# eSE probes its hardware once at startup. Starting before the NFC modules
+# leaves it permanently absent; Weaver also caches a failed TEE session.
+on property:vendor.sys.listeners.registered=true && property:twrp.modules.loaded=true && property:aera.variant.files_copied=1 && property:crypto.ready=1
+    start vendor.secure_element
     start odm.weaver-service
 
 on property:twrp.modules.loaded=true
-    # KeyMint stays down until this has pointed the version properties at the
-    # installed system, so start it as early as the mapper nodes allow.
+    # Keep modem firmware outside /vendor: mounting over firmware_mnt hides
+    # the recovery's packaged eSE trustlets, which are not in every modem image.
+    mkdir /firmware 0755 root shell
+    mount vfat /dev/block/bootdevice/by-name/modem${ro.boot.slot_suffix} /firmware ro shortname=lower,uid=1000,gid=1000,dmask=227,fmask=337
+    # Prepare crypto only after the modem mount has completed, so its firmware
+    # links are ready before secure-element startup.
     start odm.prepdecrypt
-    # Keep the modem image mounted: qca_cld3_peach_v2 loads WLAN firmware
-    # from /vendor/firmware_mnt/image after the driver is inserted.
-    mkdir /vendor/firmware_mnt 0755 root shell
-    mount vfat /dev/block/bootdevice/by-name/modem${ro.boot.slot_suffix} /vendor/firmware_mnt ro,shortname=lower,uid=1000,gid=1000,dmask=227,fmask=337
-    mount none /vendor/firmware_mnt /firmware bind
     # Load ADSP firmware for PMIC
     wait /sys/kernel/boot_adsp/boot
     write /sys/kernel/boot_adsp/boot 1
