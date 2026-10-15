@@ -19,8 +19,8 @@ $(call inherit-product, $(SRC_TARGET_DIR)/product/emulated_storage.mk)
 # Configure twrp config common.mk
 $(call inherit-product, vendor/twrp/config/common.mk)
 
-# Configure AERA for the Xiaomi SM8750 family.
-$(call inherit-product, $(DEVICE_PATH)/aera_sm8750_thales.mk)
+# Configure AERA for Xiaomi 15 (dada).
+$(call inherit-product, $(DEVICE_PATH)/aera_dada.mk)
 
 # API
 BOARD_SHIPPING_API_LEVEL := 35

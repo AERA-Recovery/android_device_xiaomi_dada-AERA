@@ -7,7 +7,7 @@
 # Building with minimal manifest
 ALLOW_MISSING_DEPENDENCIES := true
 
-DEVICE_PATH := device/xiaomi/sm8750_thales
+DEVICE_PATH := device/xiaomi/dada
 
 # Rules
 BUILD_BROKEN_DUP_RULES := true

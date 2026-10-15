@@ -1,6 +1,6 @@
 #!/bin/bash
 
-FDEVICE="sm8750_thales"
+FDEVICE="dada"
 
 if [ "$1" = "$FDEVICE" ] || [ "$AERA_BUILD_DEVICE" = "$FDEVICE" ]; then
     export LC_ALL="C"
@@ -26,7 +26,7 @@ if [ "$1" = "$FDEVICE" ] || [ "$AERA_BUILD_DEVICE" = "$FDEVICE" ]; then
     export AERA_SETTINGS_ROOT_DIRECTORY=/persist
     export AERA_MISCELLANEOUS_ROOT_DIRECTORY=/sdcard
 
-    export TARGET_DEVICE_ALT="dada,haotian,xuanyuan"
+    export TARGET_DEVICE_ALT="dada"
     export AERA_TARGET_DEVICES="$TARGET_DEVICE_ALT"
     export AERA_USE_DMSETUP=1
     export AERA_ENABLE_ROOT_MANAGER=1

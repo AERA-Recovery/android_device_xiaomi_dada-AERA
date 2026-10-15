@@ -4,14 +4,15 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-DEVICE_PATH := device/xiaomi/sm8750_thales
+DEVICE_PATH := device/xiaomi/dada
 
 # Inherit from device.mk configuration
 $(call inherit-product, $(DEVICE_PATH)/device.mk)
 
 ## Device identifier
-PRODUCT_DEVICE := sm8750_thales
-PRODUCT_NAME := twrp_sm8750_thales
+PRODUCT_DEVICE := dada
+PRODUCT_NAME := twrp_dada
+PRODUCT_MODEL := Xiaomi 15
 PRODUCT_BRAND := Xiaomi
 PRODUCT_MANUFACTURER := Xiaomi
 
