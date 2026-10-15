@@ -90,6 +90,16 @@ service aera-audio-bootstrap /system/bin/aera-audio-bootstrap
     user root
     group root system audio media wakelock
 
+# Release temporary stock overlays as soon as module loading finishes, rather
+# than waiting for prepdecrypt's version inspection. Never unmount the ramdisk
+# or its ODM bind. This follows the early cleanup used by Lighthouse/Infiniti.
+service aera-restore-ramdisk /system/bin/sh -c "while grep -q '^/dev/block/.* /odm ' /proc/mounts; do umount -l /odm || exit 1; done; while grep -q '^/dev/block/.* /vendor ' /proc/mounts; do umount -l /vendor || exit 1; done; echo 'AERA: early vendor/odm overlay cleanup complete' > /dev/kmsg; setprop aera.ramdisk.ready 1"
+    user root
+    group root
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
+
 on init
     start vendor.boot-qti
     setprop prepdecrypt.setpatch true
@@ -106,36 +116,42 @@ on fs
     chown system drmrpc /dev/qseecom
     chmod 0664 /dev/ion
     chown system system /dev/ion
-    # Its SSD listener opens by-name/ssd, which ueventd may not have made yet.
-    wait /dev/block/bootdevice/by-name/ssd 10
-    start vendor.qseecomd
     mkdir /mnt/vendor 0775 shell system
     mkdir /mnt/vendor/persist 0775 shell system
     mkdir /tmp/persist 0775 shell system
     mount none /tmp/persist /mnt/vendor/persist bind rec
 
-on post-fs
-    start odm.variant-script
-
 on boot
     setprop sys.usb.config adb
 
 # qseecomd is up, so the HALs that reach a trustlet through it can follow.
-on property:vendor.sys.listeners.registered=true
+on property:vendor.sys.listeners.registered=true && property:aera.ramdisk.ready=1
     start vendor.gatekeeper_default
 
 # variant-script has copied this SKU's files into /odm.
-on property:aera.variant.files_copied=1
+on property:aera.variant.files_copied=1 && property:aera.ramdisk.ready=1
     start odm.vibratorfeature-service
     start odm.touch_report
 
 # eSE probes its hardware once at startup. Starting before the NFC modules
 # leaves it permanently absent; Weaver also caches a failed TEE session.
-on property:vendor.sys.listeners.registered=true && property:twrp.modules.loaded=true && property:aera.variant.files_copied=1 && property:crypto.ready=1
+on property:vendor.sys.listeners.registered=true && property:twrp.modules.loaded=true && property:aera.variant.files_copied=1 && property:crypto.ready=1 && property:aera.ramdisk.ready=1
     start vendor.secure_element
     start odm.weaver-service
 
 on property:twrp.modules.loaded=true
+    # Do this before firmware waits and the slower crypto version preparation.
+    start aera-restore-ramdisk
+
+# start is asynchronous. Only the helper's successful completion may release
+# services that could otherwise retain stock vendor mappings after lazy unmount.
+# Keep this device-local; do not stop touch/TEE services during a transition.
+on property:aera.ramdisk.ready=1
+    # Copy SKU files into the ramdisk ODM, not the temporary stock overlay.
+    start odm.variant-script
+    # Its SSD listener opens by-name/ssd, which ueventd may not have made yet.
+    wait /dev/block/bootdevice/by-name/ssd 10
+    start vendor.qseecomd
     # Keep modem firmware outside /vendor: mounting over firmware_mnt hides
     # the recovery's packaged eSE trustlets, which are not in every modem image.
     mkdir /firmware 0755 root shell
