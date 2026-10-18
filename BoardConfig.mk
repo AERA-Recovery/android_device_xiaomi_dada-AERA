@@ -81,6 +81,12 @@ TARGET_COPY_OUT_VENDOR := vendor
 
 TARGET_COPY_OUT_ODM := odm
 BOARD_ODMIMAGE_FILE_SYSTEM_TYPE := ext4
+
+# The recovery overlay supplies real directories at these paths. Android's
+# baseline ramdisk has /vendor/odm symlinks instead, which rsync cannot replace
+# over a populated overlay on an incremental recovery-image rebuild.
+BOARD_RECOVERY_ROOT_RSYNC_EXCLUDE := odm/bin odm/etc odm/firmware odm/lib64
+
 BOARD_USES_VENDOR_DLKMIMAGE := true
 TARGET_COPY_OUT_VENDOR_DLKM := vendor_dlkm
 BOARD_VENDOR_DLKMIMAGE_FILE_SYSTEM_TYPE := ext4
